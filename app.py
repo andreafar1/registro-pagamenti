@@ -5,14 +5,18 @@ from datetime import date, datetime
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, abort, flash, g, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash, g, redirect, render_template, request, send_from_directory, session, url_for
+from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "registro.db"
+UPLOAD_DIR = DATA_DIR / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
 app.config.update(
@@ -21,6 +25,7 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.getenv("COOKIE_SECURE", "false").lower() == "true",
     PERMANENT_SESSION_LIFETIME=60 * 60 * 12,
+    MAX_CONTENT_LENGTH=10 * 1024 * 1024,
 )
 
 CATEGORIES = ["Luce", "Gas", "Condominio", "Riscaldamento", "Altro"]
@@ -68,6 +73,18 @@ def init_db():
         );
         """
     )
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(expenses)")}
+    for name, definition in (
+        ("attachment_filename", "TEXT"),
+        ("attachment_original_name", "TEXT"),
+        ("attachment_mime", "TEXT"),
+    ):
+        if name not in columns:
+            try:
+                connection.execute(f"ALTER TABLE expenses ADD COLUMN {name} {definition}")
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error).lower():
+                    raise
     users = [
         (os.getenv("OWNER_USER", "proprietario"), os.getenv("OWNER_PASSWORD", "cambia-subito"), os.getenv("OWNER_NAME", "Proprietario"), "proprietario"),
         (os.getenv("TENANT_USER", "inquilino"), os.getenv("TENANT_PASSWORD", "cambia-subito"), os.getenv("TENANT_NAME", "Inquilino"), "inquilino"),
@@ -194,6 +211,39 @@ def parse_form():
     return category, description, amount_cents, due_date, paid, paid_date, notes
 
 
+def save_attachment(upload):
+    if not upload or not upload.filename:
+        return None
+    original_name = secure_filename(upload.filename)
+    extension = Path(original_name).suffix.lower()
+    if extension not in {".pdf", ".jpg", ".jpeg"}:
+        raise ValueError("Sono ammessi soltanto file PDF, JPG e JPEG.")
+    header = upload.stream.read(5)
+    upload.stream.seek(0)
+    is_pdf = extension == ".pdf" and header.startswith(b"%PDF-")
+    is_jpeg = extension in {".jpg", ".jpeg"} and header[:3] == b"\xff\xd8\xff"
+    if not (is_pdf or is_jpeg):
+        raise ValueError("Il contenuto del file non corrisponde al formato indicato.")
+    stored_name = f"{secrets.token_hex(16)}{extension}"
+    upload.save(UPLOAD_DIR / stored_name)
+    mime = "application/pdf" if is_pdf else "image/jpeg"
+    return stored_name, original_name, mime
+
+
+def remove_attachment(filename):
+    if filename:
+        try:
+            (UPLOAD_DIR / filename).unlink()
+        except FileNotFoundError:
+            pass
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def file_too_large(_error):
+    flash("L’allegato supera il limite di 10 MB.", "error")
+    return redirect(request.referrer or url_for("index"))
+
+
 @app.route("/nuova", methods=["GET", "POST"])
 @login_required
 def new_expense():
@@ -201,10 +251,11 @@ def new_expense():
         require_csrf()
         try:
             values = parse_form()
+            attachment_values = save_attachment(request.files.get("attachment")) or (None, None, None)
             now = datetime.utcnow().isoformat(timespec="seconds")
             db().execute(
-                "INSERT INTO expenses(category,description,amount_cents,due_date,paid,paid_date,notes,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (*values, g.user["id"], now, now),
+                "INSERT INTO expenses(category,description,amount_cents,due_date,paid,paid_date,notes,created_by,created_at,updated_at,attachment_filename,attachment_original_name,attachment_mime) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (*values, g.user["id"], now, now, *attachment_values),
             )
             db().commit()
             flash("Spesa aggiunta.", "success")
@@ -224,11 +275,19 @@ def edit_expense(expense_id):
         require_csrf()
         try:
             values = parse_form()
+            attachment_values = save_attachment(request.files.get("attachment"))
+            remove_requested = request.form.get("remove_attachment") == "on"
+            if not attachment_values:
+                attachment_values = (None, None, None) if remove_requested else (
+                    expense["attachment_filename"], expense["attachment_original_name"], expense["attachment_mime"]
+                )
             db().execute(
-                "UPDATE expenses SET category=?,description=?,amount_cents=?,due_date=?,paid=?,paid_date=?,notes=?,updated_at=? WHERE id=?",
-                (*values, datetime.utcnow().isoformat(timespec="seconds"), expense_id),
+                "UPDATE expenses SET category=?,description=?,amount_cents=?,due_date=?,paid=?,paid_date=?,notes=?,updated_at=?,attachment_filename=?,attachment_original_name=?,attachment_mime=? WHERE id=?",
+                (*values, datetime.utcnow().isoformat(timespec="seconds"), *attachment_values, expense_id),
             )
             db().commit()
+            if (request.files.get("attachment") and request.files["attachment"].filename or remove_requested) and expense["attachment_filename"]:
+                remove_attachment(expense["attachment_filename"])
             flash("Spesa aggiornata.", "success")
             return redirect(url_for("index"))
         except ValueError as error:
@@ -240,10 +299,28 @@ def edit_expense(expense_id):
 @login_required
 def delete_expense(expense_id):
     require_csrf()
+    expense = db().execute("SELECT attachment_filename FROM expenses WHERE id=?", (expense_id,)).fetchone()
     db().execute("DELETE FROM expenses WHERE id=?", (expense_id,))
     db().commit()
+    if expense:
+        remove_attachment(expense["attachment_filename"])
     flash("Spesa eliminata.", "success")
     return redirect(url_for("index"))
+
+
+@app.get("/allegato/<int:expense_id>")
+@login_required
+def attachment(expense_id):
+    expense = db().execute(
+        "SELECT attachment_filename, attachment_original_name, attachment_mime FROM expenses WHERE id=?",
+        (expense_id,),
+    ).fetchone()
+    if not expense or not expense["attachment_filename"]:
+        abort(404)
+    return send_from_directory(
+        UPLOAD_DIR, expense["attachment_filename"], as_attachment=True,
+        download_name=expense["attachment_original_name"], mimetype=expense["attachment_mime"],
+    )
 
 
 @app.template_filter("euro")
