@@ -1,0 +1,16 @@
+.due-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: 10px 0 4px !important;
+  padding: 7px 11px;
+  border: 1px solid #fed7aa;
+  border-radius: 9px;
+  background: #fff7ed;
+  color: #9a3412 !important;
+}
+
+.due-date strong { color: inherit; font-size: 1.05rem; }
+.due-date.scaduto { border-color: #fecaca; background: #fef2f2; color: #b91c1c !important; }
+.due-date.pagato { border-color: #bbf7d0; background: #f0fdf4; color: #15803d !important; }
+.created-by { font-size: .86rem; }
