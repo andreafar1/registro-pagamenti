@@ -1,1 +1,29 @@
-{% extends 'base.html' %}{% block content %}<section class="form-card card"><a href="{{ url_for('index') }}">← Torna al registro</a><h1>{{ 'Modifica spesa' if expense else 'Nuova spesa' }}</h1><form method="post"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><label>Categoria<select name="category" required>{% for c in categories %}<option {{ 'selected' if expense and expense.category==c }}>{{ c }}</option>{% endfor %}</select></label><label>Descrizione<input name="description" required value="{{ expense.description if expense else '' }}" placeholder="Es. Bolletta luce settembre"></label><div class="grid"><label>Importo (€)<input name="amount" inputmode="decimal" required value="{{ '%.2f'|format(expense.amount_cents/100) if expense else '' }}"></label><label>Scadenza<input type="date" name="due_date" required value="{{ expense.due_date if expense else '' }}"></label></div><label class="check"><input type="checkbox" name="paid" {{ 'checked' if expense and expense.paid }}> Pagamento effettuato</label><label>Data pagamento<input type="date" name="paid_date" value="{{ expense.paid_date if expense and expense.paid_date else '' }}"></label><label>Note<textarea name="notes" rows="3">{{ expense.notes if expense else '' }}</textarea></label><button class="primary">Salva</button></form></section>{% endblock %}
+{% extends 'base.html' %}
+{% block content %}
+<section class="form-card card">
+  <a href="{{ url_for('index') }}">← Torna al registro</a>
+  <h1>{{ 'Modifica spesa' if expense else 'Nuova spesa' }}</h1>
+  <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <label>Categoria
+      <select name="category" required>{% for c in categories %}<option {{ 'selected' if expense and expense.category==c }}>{{ c }}</option>{% endfor %}</select>
+    </label>
+    <label>Descrizione<input name="description" required value="{{ expense.description if expense else '' }}" placeholder="Es. Bolletta luce settembre"></label>
+    <div class="grid">
+      <label>Importo (€)<input name="amount" inputmode="decimal" required value="{{ '%.2f'|format(expense.amount_cents/100) if expense else '' }}"></label>
+      <label>Scadenza<input type="date" name="due_date" required value="{{ expense.due_date if expense else '' }}"></label>
+    </div>
+    <label class="check"><input type="checkbox" name="paid" {{ 'checked' if expense and expense.paid }}> Pagamento effettuato</label>
+    <label>Data pagamento<input type="date" name="paid_date" value="{{ expense.paid_date if expense and expense.paid_date else '' }}"></label>
+    <label>Note<textarea name="notes" rows="3">{{ expense.notes if expense else '' }}</textarea></label>
+    <label>Allegato PDF o JPEG (massimo 10 MB)
+      <input type="file" name="attachment" accept="application/pdf,image/jpeg,.pdf,.jpg,.jpeg">
+    </label>
+    {% if expense and expense.attachment_filename %}
+      <p>Allegato attuale: <a href="{{ url_for('attachment', expense_id=expense.id) }}">{{ expense.attachment_original_name }}</a></p>
+      <label class="check"><input type="checkbox" name="remove_attachment"> Rimuovi l’allegato attuale</label>
+    {% endif %}
+    <button class="primary">Salva</button>
+  </form>
+</section>
+{% endblock %}
