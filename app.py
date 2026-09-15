@@ -142,6 +142,9 @@ def logout():
 @login_required
 def index():
     selected = request.args.get("filter", "tutte")
+    selected_category = request.args.get("category", "Tutte")
+    if selected_category != "Tutte" and selected_category not in CATEGORIES:
+        selected_category = "Tutte"
     rows = db().execute(
         "SELECT e.*, u.display_name creator FROM expenses e JOIN users u ON u.id=e.created_by ORDER BY e.due_date DESC, e.id DESC"
     ).fetchall()
@@ -150,12 +153,26 @@ def index():
     for row in rows:
         item = dict(row)
         item["status"] = "pagato" if item["paid"] else ("scaduto" if item["due_date"] < today else "da_pagare")
-        if selected == "tutte" or item["status"] == selected:
+        status_matches = selected == "tutte" or item["status"] == selected
+        category_matches = selected_category == "Tutte" or item["category"] == selected_category
+        if status_matches and category_matches:
             expenses.append(item)
     all_rows = [dict(r) for r in rows]
     total = sum(r["amount_cents"] for r in all_rows)
     paid = sum(r["amount_cents"] for r in all_rows if r["paid"])
-    return render_template("index.html", expenses=expenses, total=total, paid=paid, remaining=total-paid, selected=selected)
+    category_summary = []
+    for category in ["Tutte", *CATEGORIES]:
+        category_rows = all_rows if category == "Tutte" else [r for r in all_rows if r["category"] == category]
+        category_summary.append({
+            "name": category,
+            "count": len(category_rows),
+            "total": sum(r["amount_cents"] for r in category_rows),
+        })
+    return render_template(
+        "index.html", expenses=expenses, total=total, paid=paid,
+        remaining=total-paid, selected=selected,
+        selected_category=selected_category, category_summary=category_summary,
+    )
 
 
 def parse_form():
