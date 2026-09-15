@@ -45,7 +45,7 @@ chmod +x scripts/backup.sh
 sudo ./scripts/backup.sh
 ```
 
-I backup sono salvati in `backups/` e quelli più vecchi di 30 giorni vengono eliminati. Copia periodicamente i backup anche su un altro dispositivo.
+I backup sono salvati in `backups/` e quelli più vecchi di 30 giorni vengono eliminati. Lo script salva sia il database sia gli allegati presenti in `data/uploads/`. Copia periodicamente i backup anche su un altro dispositivo.
 
 ## Accesso da Internet
 
