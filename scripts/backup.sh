@@ -9,4 +9,8 @@ connection=sqlite3.connect('/app/data/registro.db')
 for line in connection.iterdump(): print(line)
 PY
 find backups -type f -name 'registro-*.sql.gz' -mtime +30 -delete
+if [ -d data/uploads ]; then
+  tar -czf "backups/allegati-${stamp}.tar.gz" -C data uploads
+  find backups -type f -name 'allegati-*.tar.gz' -mtime +30 -delete
+fi
 echo "Backup creato: backups/registro-${stamp}.sql.gz"
