@@ -180,8 +180,13 @@ def index():
         category_matches = selected_category == "Tutte" or item["category"] == selected_category
         if status_matches and category_matches:
             expenses.append(item)
-    total = sum(r["amount_cents"] for r in year_rows)
-    paid = sum(r["amount_cents"] for r in year_rows if r["paid"])
+    summary_rows = (
+        year_rows
+        if selected_category == "Tutte"
+        else [r for r in year_rows if r["category"] == selected_category]
+    )
+    total = sum(r["amount_cents"] for r in summary_rows)
+    paid = sum(r["amount_cents"] for r in summary_rows if r["paid"])
     category_summary = []
     for category in ["Tutte", *CATEGORIES]:
         category_rows = year_rows if category == "Tutte" else [r for r in year_rows if r["category"] == category]
