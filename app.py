@@ -1,7 +1,7 @@
 import os
 import secrets
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
@@ -29,6 +29,8 @@ app.config.update(
 )
 
 CATEGORIES = ["Luce", "Gas", "Condominio", "Riscaldamento", "Altro"]
+EXPIRING_CATEGORY = "In scadenza"
+EXPIRING_DAYS = 60
 
 
 def db():
@@ -160,7 +162,7 @@ def logout():
 def index():
     selected = request.args.get("filter", "tutte")
     selected_category = request.args.get("category", "Tutte")
-    if selected_category != "Tutte" and selected_category not in CATEGORIES:
+    if selected_category not in ["Tutte", EXPIRING_CATEGORY, *CATEGORIES]:
         selected_category = "Tutte"
     rows = db().execute(
         "SELECT e.*, u.display_name creator FROM expenses e JOIN users u ON u.id=e.created_by ORDER BY e.due_date DESC, e.id DESC"
@@ -173,23 +175,29 @@ def index():
         selected_year = current_year if current_year in available_years else (available_years[0] if available_years else current_year)
     year_rows = all_rows if selected_year == "Tutti" else [r for r in all_rows if r["due_date"][:4] == selected_year]
     today = date.today().isoformat()
+    expiring_until = (date.today() + timedelta(days=EXPIRING_DAYS)).isoformat()
+
+    def category_matches(item, category):
+        if category == "Tutte":
+            return True
+        if category == EXPIRING_CATEGORY:
+            return not item["paid"] and today <= item["due_date"] <= expiring_until
+        return item["category"] == category
+
     expenses = []
     for item in year_rows:
         item["status"] = "pagato" if item["paid"] else ("scaduto" if item["due_date"] < today else "da_pagare")
         status_matches = selected == "tutte" or item["status"] == selected
-        category_matches = selected_category == "Tutte" or item["category"] == selected_category
-        if status_matches and category_matches:
+        matches_category = category_matches(item, selected_category)
+        if status_matches and matches_category:
             expenses.append(item)
-    summary_rows = (
-        year_rows
-        if selected_category == "Tutte"
-        else [r for r in year_rows if r["category"] == selected_category]
-    )
+    summary_rows = [r for r in year_rows if category_matches(r, selected_category)]
     total = sum(r["amount_cents"] for r in summary_rows)
     paid = sum(r["amount_cents"] for r in summary_rows if r["paid"])
     category_summary = []
-    for category in ["Tutte", *CATEGORIES]:
-        category_rows = year_rows if category == "Tutte" else [r for r in year_rows if r["category"] == category]
+    for category in ["Tutte", EXPIRING_CATEGORY, *CATEGORIES]:
+        source_rows = all_rows if category == EXPIRING_CATEGORY else year_rows
+        category_rows = [r for r in source_rows if category_matches(r, category)]
         category_summary.append({
             "name": category,
             "count": len(category_rows),
